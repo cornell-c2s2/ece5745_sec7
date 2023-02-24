@@ -32,31 +32,26 @@ combination of many open-source tools, predominantly
 [OpenROAD](https://github.com/The-OpenROAD-Project), with the open-source 
 [Skywater 130nm PDK](https://github.com/google/skywater-pdk)
 
-![](assets/fig/asic-flow.png)
+![](assets/fig/openlane-flow.png)
 
-Obviously, entering commands manually for each tool is very tedious and
-error prone. An agile hardware design flow requires automation to
-simplify rapidly exploring the cycle time, area, and energy design space
-of one or more designs. Synopsys and Cadence tools can be scripted using
-TCL, and even better, the ECE 5745 staff have already created these TCL
-scripts along with a set of Makefiles to run the TCL scripts using a
-framework called mflowgen. In this section, we will learn how to use this
-automated flow to evaluate cycle time, area, and energy of both the
-fixed-latency and variable-latency multipliers.
+Note that you should not go into this tutorial expecting comparable results
+to those obtained with Cadence and Synopsys. However, you should approach
+it from the standpoint of someone without any access to industry tools.
+If your local environment were to be set up correctly, this tutorial could
+be run from there as well.
 
-The first step is to start access `ecelinux`. You can use VS Code for
-working at the command line, but you will also need to a remote access
-option that supports Linux applications with a GUI such as X2Go,
-MobaXterm, or Mac Terminal with XQuartz. Once you are at the ecelinux
-prompt, source the setup script, clone this repository from GitHub, and
-define an environment variable to keep track of the top directory for the
-project.
+The first step is to start access `ecelinux`. You can use VS Code for working 
+at the command line. We won’t need to use Linux applications with a GUI, so 
+there is no need to use X2go, MobaXterm, or Mac Terminal with XQuartz. Once 
+you are at the ecelinux prompt, source the C2S2 setup script, clone this repository 
+from GitHub, and define an environment variable to keep track of the top 
+directory for the project.
 
-    % source setup-ece5745.sh
+    % source setup-c2s2.sh
     % mkdir -p $HOME/ece5745
     % cd $HOME/ece5745
-    % git clone https://github.com/cornell-ece5745/ece5745-S03-asic-flow sec3
-    % cd ece5745-S03-asic-flow
+    % git clone https://github.com/cornell-c2s2/ece5745_sec7.git sec7
+    % cd sec7
     % TOPDIR=$PWD
 
 Test, Evaluate, and Pickle the Design

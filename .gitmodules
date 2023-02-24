@@ -1,0 +1,3 @@
+[submodule "openlane"]
+	path = openlane
+	url = git@github.com:efabless/caravel_user_project.git
