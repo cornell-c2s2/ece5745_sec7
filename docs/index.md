@@ -2,7 +2,7 @@
 ECE 5745 Section 7: OpenLANE Open-Source Flow from C2S2
 ==========================================================================
 
- - Author: Aidan McNay
+ - Author: Aidan McNay, Christopher Batten
  - Date: February 10, 2023
 
 **Table of Contents**
@@ -39,6 +39,16 @@ to those obtained with Cadence and Synopsys. However, you should approach
 it from the standpoint of someone without any access to industry tools.
 If your local environment were to be set up correctly, this tutorial could
 be run from there as well.
+
+For an expedited process of bringing up your chip, we will also be using the
+[Caravel harness](https://caravel-harness.readthedocs.io/en/latest/). Caravel
+is a test harness that provides us with a pad ring and a 
+[Litex VexRISCV SOC](https://caravel-mgmt-soc-litex.readthedocs.io/en/latest/).
+This allows a user to use the given design space to make their desired design,
+and not have to worry about a lot of the boilerplate hardware that goes into
+interfacing the design with the outside world
+
+![](assets/fig/caravel.png)
 
 The first step is to start access `ecelinux`. You can use VS Code for working 
 at the command line. We won’t need to use Linux applications with a GUI, so 
