@@ -2,18 +2,22 @@
 ECE 5745 Section 7: OpenLANE Open-Source Flow from C2S2
 ==========================================================================
 
- - Author: Aidan McNay
- - Date: February 10, 2023
+ - Author: Aidan McNay, Christopher Batten
+ - Date: March 17th, 2023
 
 **Table of Contents**
 
  - Introduction
- - Test, Simulate, and Translate the Design
- - Generating an ASIC Flow
- - Pushing the Design through the Automated ASIC Flow
- - Evaluating Cycle Time
+ - Counter Design
+ - Test and Pickle the Design
+ - Switching over to OpenLANE
+ - OpenLANE Configurations
+ - Pushing Through the Flow
+ - DRC and LVS
  - Evaluating Area
- - Evaluating Energy
+ - Evaluating Cycle Time
+ - Evaluating Power
+ - Viewing our final GDS
  - Summary
 
 Introduction
@@ -32,424 +36,320 @@ combination of many open-source tools, predominantly
 [OpenROAD](https://github.com/The-OpenROAD-Project), with the open-source 
 [Skywater 130nm PDK](https://github.com/google/skywater-pdk)
 
-![](assets/fig/asic-flow.png)
+![](assets/fig/openlane-flow.png)
 
-Obviously, entering commands manually for each tool is very tedious and
-error prone. An agile hardware design flow requires automation to
-simplify rapidly exploring the cycle time, area, and energy design space
-of one or more designs. Synopsys and Cadence tools can be scripted using
-TCL, and even better, the ECE 5745 staff have already created these TCL
-scripts along with a set of Makefiles to run the TCL scripts using a
-framework called mflowgen. In this section, we will learn how to use this
-automated flow to evaluate cycle time, area, and energy of both the
-fixed-latency and variable-latency multipliers.
+Note that you should not go into this tutorial expecting comparable results
+to those obtained with Cadence and Synopsys. However, you should approach
+it from the standpoint of someone without any access to industry tools.
+If your local environment were to be set up correctly, this tutorial could
+be run from there as well.
 
-The first step is to start access `ecelinux`. You can use VS Code for
-working at the command line, but you will also need to a remote access
-option that supports Linux applications with a GUI such as X2Go,
-MobaXterm, or Mac Terminal with XQuartz. Once you are at the ecelinux
-prompt, source the setup script, clone this repository from GitHub, and
-define an environment variable to keep track of the top directory for the
-project.
+For an expedited process of bringing up your chip, we will also be using the
+[Caravel harness](https://caravel-harness.readthedocs.io/en/latest/). Caravel
+is a test harness that provides us with a pad ring and a 
+[Litex VexRISCV SOC](https://caravel-mgmt-soc-litex.readthedocs.io/en/latest/).
+This allows a user to use the given design space to make their desired design,
+and not have to worry about a lot of the boilerplate hardware that goes into
+interfacing the design with the outside world
 
-    % source setup-ece5745.sh
+![](assets/fig/caravel.png)
+
+The first step is to log into the C2S2 server - this should hopefully look very
+similar to the steps you would follow for ECELinux (replacing `<netid>` with your
+NetID):
+
+    % ssh <netid>@c2s2-dev.ece.cornell.edu
+
+You can use VS Code for 
+working at the command line, but you will also need to a remote access option 
+that supports Linux applications with a GUI such as X2Go, MobaXterm, or Mac 
+Terminal with XQuartz. Once you are at the c2s2-dev prompt, source the C2S2 
+setup script, clone this repository from GitHub, and define an environment 
+variable to keep track of the top directory for the project.
+
+    % source setup-c2s2.sh
     % mkdir -p $HOME/ece5745
     % cd $HOME/ece5745
-    % git clone https://github.com/cornell-ece5745/ece5745-S03-asic-flow sec3
-    % cd ece5745-S03-asic-flow
+    % git clone https://github.com/cornell-c2s2/ece5745_sec7.git sec7
+    % cd sec7
     % TOPDIR=$PWD
 
-Test, Evaluate, and Pickle the Design
+Counter Design
+--------------------------------------------------------------------------
+
+For this tutorial, we will be using a very simple design; a free-running
+counter with enable and reset lines. 
+
+![](assets/fig/counter_block.png)
+
+You can view the framework file here:
+
+    % cd $TOPDIR/sim/counter
+    % less CounterVRTL.v
+
+Using your preferred code editor, modify the file to have the correct
+functionality - it is very simple, and should only take a few lines of code.
+
+Test and Pickle the Design
 --------------------------------------------------------------------------
 
 The first step is always to verify that our design works before we start
 evaluating it. There is no sense in running the flow if the design is
-incorrect!
+incorrect! In addition, we will be dumping the
+test benches in Verilog, so that we may use them again in OpenLANE
 
     % mkdir -p $TOPDIR/sim/build
     % cd $TOPDIR/sim/build
-    % pytest ../lab1_imul
-
-The tests are for verification. We probably also want to do some
-preliminary design-space exploration of execution time in cycles using an
-evaluation simulator. You can run the evaluation simulator for our
-fixed-latency and variable-latency multipliers like this:
-
-    % cd $TOPDIR/sim/build
-    % ../lab1_imul/imul-sim --impl fixed --input small --stats --translate --dump-vtb
-    % ../lab1_imul/imul-sim --impl var   --input small --stats --translate --dump-vtb
+    % pytest ../counter/ --test-verilog --dump-vtb
 
 You should now have the Verilog that we want to push through the ASIC
-flow along with Verilog test benches that can be used for power analysis.
-The test bench uses a stream of 50 inputs where each input is small
-random number. Make a note of the execution time in cycles and the
-average latency per multiply transaction for each design on your handout.
+flow along with Verilog test benches that can be used for gate-level simulation.
 Take a quick look at the final Verilog RTL and test benches.
 
     % cd $TOPDIR/sim/build
-    % less IntMulFixed__pickled.v
-    % less IntMulVar__pickled.v
-    % less IntMulFixed_imul-fixed-small_tb.v.cases
-    % less IntMulVar_imul-var-small_tb.v.cases
+    % less Counter__pickled.v
+    % less Counter_test_simple_tb.v
+    % less Counter_test_simple_tb.v.cases
 
-Generating an ASIC Flow
+Switching over to OpenLANE
 --------------------------------------------------------------------------
 
-In agile ASIC design, we usually prefer building _chip generators_
-instead of _chip instances_ to enable rapidly exploring a design space of
-possibilities. Similarly, we usually prefer using a _flow generator_
-instead of a _flow instance_ so we can rapidly generate many different
-flows for different designs, parameters, and even ADKs. We will use
-the mflowgen framework as our flow generator. You can read more about
-mflowgen here:
+First, we should clone the Caravel User Project repository within our
+section repository, as well as install a few wrapper designs, such as
+Caravel and the Management Core Wrapper
 
-  - <https://mflowgen.readthedocs.io/en/latest>
+    % cd $TOPDIR
+    % git clone git@github.com:efabless/caravel_user_project.git openlane
+    % cd openlane
+    % git checkout bc4ccfec4b35d19220740f143ff1798fdfa4f0eb
+    % make install check-env install_mcw setup-timing-scripts
+    % OPENLANE_DIR=$PWD
 
-We use a `flow.py` file to configure the flow. Every design you want to
-push through the flow should have its own unique subdirectory in the
-`asic` directory with its own `flow.py`. Let's take a look at the
-`flow.py` for the fixed-latency multiplier here:
+Now that we have our pickled Verilog file, we can transfer it over to
+OpenLANE to begin working with it within their environment! All of our
+RTL code will live within the `caravel/verilog/rtl` folder
 
-    % cd $TOPDIR/asic
-    % less lab1-fixed/flow.py
+    % cp $TOPDIR/sim/build/Counter__pickled.v $OPENLANE_DIR/verilog/rtl/Counter.v
+    % cd $OPENLANE_DIR/verilog/rtl
 
-There is quite a bit of information in the `flow.py`, but the important
-configuration information is placed at the top:
+Unfortunately, the OpenLANE tools are currently configured to only accept
+Verilog-2005, not SystemVerilog. For this, we can use an open-source tool
+called [sv2v](https://github.com/zachjs/sv2v) to modify our code from SystemVerilog
+to Verilog
 
-    #-----------------------------------------------------------------------
-    # Parameters
-    #-----------------------------------------------------------------------
+    % mv Counter.v Counter.sv
+    % sv2v -w adjacent Counter.sv
+    % rm Counter.sv
+    % less Counter.v
 
-    at_name = 'freepdk-45nm'
-    adk_view = 'stdview'
+Notice the unusual declaration of the ports of the top-level `Counter` module - Yosys 
+will not be able to understand this interface, so we must edit this to our more familiar 
+declarations (often times, a lot of the challenges of open-source tools are getting them 
+to work with others). In addition, another change we have to make to our Verilog file is to 
+explicitly tell the OpenLANE scripts what type of power we want routed to the cells 
+in our design. Using your preferred code editor, open your `Counter.v` file, and edit
+the declaration of the top-level `Counter` module to look like this (deleting the later
+delcarations of the ports as inputs and outputs):
 
-    parameters = {
-      'construct_path'  : __file__,
-      'sim_path'        : "{}/../../sim".format(this_dir),
-      'design_path'     : "{}/../../sim/lab1_imul".format(this_dir),
-      'design_name'     : 'IntMulFixed',
-      'clock_period'    : 0.6,
-      'clk_port'        : 'clk',
-      'reset_port'      : 'reset',
-      'adk'             : adk_name,
-      'adk_view'        : adk_view,
-      'pad_ring'        : False,
+    module Counter (
+    `ifdef USE_POWER_PINS
+        inout vccd1, // User area 1 1.8V supply
+        inout vssd1, // User area 1 digital ground
+    `endif
+        input  logic        clk,
+        input  logic        reset,
+        input  logic        en,
+        output logic [31:0] out
+    );
 
-      # VCS-sim
-      'test_design_name': 'IntMulFixed',
-      'input_delay'     : 0.05,
-      'output_delay'    : 0.05,
+OpenLANE Configurations
+--------------------------------------------------------------------------
 
-      # Synthesis
-      'gate_clock'      : True,
-      'topographical'   : False,
+The other thing we need to do before pushing our design through the flow is 
+to tell OpenLANE the configurations for our design - all the values of the
+parameters it uses in the flow. For OpenLANE, each design has its own
+configuration, stored in `$OPENLANE_DIR/openlane`:
 
-      # PT Power
-      'saif_instance'   : 'IntMulFixed_tb/DUT',
+    % cd $OPENLANE_DIR/openlane
+
+We can start off by copying the configurations for the example project as a
+baseline for our own, renaming some of the files as appropriate:
+
+    % cp -r user_proj_example Counter
+    % cd Counter
+    % mv base_user_proj_example.sdc base_Counter.sdc
+
+The main configuration file is `config.json` - open this file with your
+preferred code editor. There are a few things we need to change in this
+file to properly configure our design:
+
+ - `DESIGN_NAME` should be "Counter"
+ - In the `VERILOG_FILES`, replace the `user_proj_example` with `Counter` to
+   use our Verilog file as a source
+ - `CLOCK_PERIOD` should be 10 (in units of ns)
+ - Both `CLOCK_PORT` and `CLOCK_NET` should be "clk" (the name of
+   the clock port going into our submodule) to tell the flow which clock we're
+   using
+ - `DIE_AREA` should be "0 0 200 200" (indicating the corners of a rectangle 
+   bounding our design, with units in um)
+ - `BASE_SDC_FILE` should reference our renamed `base_Counter.sdc`
+ - Delete the entries under `"pdk::sky130*"` and `"pdk::gf180mcuC"` entirely
+   (they are if we want to specify different parameters for different libraries)
+
+After doing this, your `config.json` should look like the version below:
+
+    {
+        "DESIGN_NAME": "Counter",
+        "DESIGN_IS_CORE": 0,
+        "VERILOG_FILES": [
+            "dir::../../verilog/rtl/defines.v",
+            "dir::../../verilog/rtl/Counter.v"
+        ],
+        "CLOCK_PERIOD": 10,
+        "CLOCK_PORT": "clk",
+        "CLOCK_NET": "clk",
+        "FP_SIZING": "absolute",
+        "DIE_AREA": "0 0 200 200",
+        "FP_PIN_ORDER_CFG": "dir::pin_order.cfg",
+        "NO_SYNTH_CELL_LIST": "dir::no_synth.cells",
+        "DRC_EXCLUDE_CELL_LIST": "dir::drc_exclude.cells",
+        "PL_TARGET_DENSITY": 0.4,
+        "PL_RESIZER_SETUP_SLACK_MARGIN": 0.4,
+        "PL_RESIZER_MAX_SLEW_MARGIN": 50,
+        "GLB_RESIZER_MAX_SLEW_MARGIN": 50,
+        "GLB_RESIZER_SETUP_SLACK_MARGIN": 0.2,
+        "GRT_MAX_DIODE_INS_ITERS": 5,
+        "GRT_ANT_ITERS": 5,
+        "MAGIC_DEF_LABELS": 0,
+        "SYNTH_BUFFERING": 0,
+        "VDD_NETS": [
+            "vccd1"
+        ],
+        "GND_NETS": [
+            "vssd1"
+        ],
+        "IO_SYNC": 0,
+        "BASE_SDC_FILE": "dir::base_Counter.sdc",
+        "DIODE_INSERTION_STRATEGY": 3,
+        "RUN_CVC": 1
     }
 
-The `adk_name` specifies the targeted technology node and fabrication
-process. The `design_path` points to where all of the source files are
-and the `design_name` is the name of the corresponding top-level module.
-The `clock_period` is the target clock period we want to use for
-synthesis and place-and-route. Further down in the `flow.py` you can find
-all of the steps along with how those steps are connected together to
-create the complete flow.
+If you're curious about all the possible configurations, you can view them
+[here](https://openlane.readthedocs.io/en/latest/reference/configuration.html)
 
-To get started create a build directory and run mflowgen. Every push
-through the ASIC flow should be in its own unique build directory. You
-need to explicitly specify which design you want to push through the flow
-when you run mflowgen.
+We also need to modify the `pin_order.cfg` in the same directory, which gives
+us some control about where OpenLANE routes the pins out of our block. To do
+this, we indicate the side of the block with a comment (such as `#N` for North),
+and then provide a RegEx that matches against all pins that you want on that side
+(or multiple lines of RegEx). To stick with our block diagram layout, change this
+file to the following:
 
-    % mkdir -p $TOPDIR/asic/build-lab1-fixed
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % mflowgen run --design ../lab1-fixed
-    % make list
-    % make status
+    #N
+    reset
+    en
 
-The `list` Makefile target will display the various steps in the flow.
-You can use the `status` Makefile target to see which steps have been
-completed. The Makefile will take care of running the steps in the right
-order. You can use the `graph` Makefile target to generate a figure of
-the overall ASIC flow.
+    #S
+    clk
 
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % make graph
+    #W
+    out.*
 
-You can open the generated `graph.pdf` file to see the figure which is a
-much more detailed version of the high-level flow graph shown above.
-
-Pushing the Design through the Automated ASIC Flow
+Pushing Through the Flow
 --------------------------------------------------------------------------
 
-We want to use the generated flow to complete all of the steps from the
-previous discussion sections:
+With this, our design has been properly configured from scratch! The flow
+is automated via Makefiles:
 
- - run all of the tests to generate appropriate Verilog test harnesses
- - run all of the tests using 4-stage RTL simulation
- - perform synthesis (the front-end of the flow)
- - run all of the test using fast-functional gate-level simulation
- - perform place-and-route (the back-end of the flow)
+    % cd $OPENLANE_DIR
+    % make Counter
 
-Here are the corresponding commands. Each Makefile target corresponds to
-one of the above steps.
+This may take a while (as most flows do), but will inform you which step
+of the flow chart above it's currently on. Once the flow has completed,
+you can view the reports and logs by going to the run directory for
+your design:
 
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % make ece5745-block-gather
-    % make brg-rtl-4-state-vcssim
-    % make brg-synopsys-dc-synthesis
-    % make post-synth-gate-level-simulation
-    % make brg-cadence-innovus-signoff
+    % cd $OPENLANE_DIR/openlane/Counter/runs/Counter
+    % RESULTS_DIR=$PWD
 
-Instead of typing the complete step name, you can also just use the step
-number shown when you use the `list` Makefile target. Go ahead and work
-through each step one at a time and monitor the output. You can also use
-the `status` and `runtimes` Makefile targets to see the status of each
-step and how long each step has taken.
-
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % make status
-    % make runtimes
-
-Make sure the design passes four-state RTL simulation, fast-functional
-gate-level simulation, and back-annotated gate-level simulation! Keep in
-mind it can take 5-10 minutes to push simple designs completely through
-the flow and up to an hour to push more complicated designs through the
-flow. Consider using just the ASIC flow front-end to ensure your design
-is synthesizable and to gain some rough early intuition on area and
-timing. Then you can iterate quickly and eventually focus on the ASIC
-flow back-end.
-
-We can now open up Cadence Innovus to take a look at our final design.
-
-    % cd $TOPDIR/asic/build-lab1-fixed/11-brg-cadence-innovus-signoff
-    % innovus -64 -nolog
-    innovus> source checkpoints/design.checkpoint/save.enc
-
-You can use the design browser to help visualize how modules are mapped
-across the chip. Here are the steps:
-
- - Choose _Windows > Workspaces > Design Browser + Physical_ from the menu
- - Hide all of the metal layers by pressing the number keys
- - Browse the design hierarchy using the panel on the left
- - Right click on a module, click _Highlight_, select a color
-
-You can use the following steps in Cadence Innovus to display where the
-critical path is on the actual chip.
-
- - Choose _Timing > Debug Timing_ from the menu
- - Right click on first path in the _Path List_
- - Choose _Highlight > Only This Path > Color_
-
-You can create a screen capture to create an amoeba plot of your chip
-using the _Tools > Screen Capture > Write to GIF File_. We recommend
-inverting the colors so your amoeba plot looks better in a report.
-
-_To Do On Your Own:_ Highlight the critical path and some of the key
-modules in the fixed-latency multiplier. Create an amoeba plot, copy it
-to the workstation, and open it using the default Windows viewer.
-
-Evaluating Cycle Time
+DRC and LVS
 --------------------------------------------------------------------------
 
-Now let's explore the critical path in more detail. You can find a
-summary in the reports generated by Cadence Innovus.
+The first thing we need to do is verify that our design passes DRC and LVS
+checks:
 
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % less 11-brg-cadence-innovus-signoff/reports/timing.rpt
+    % less $RESULTS_DIR/reports/manufacturability.rpt
 
-The report shows the critical path through the design. You should see
-positive slack meaning the design is able to meeting timing.
-
-    Path 1: MET Setup Check with Pin v/dpath/result_reg/q_reg_25_/CK
-    Endpoint:   v/dpath/result_reg/q_reg_25_/D (^) checked with  leading edge of
-    'ideal_clock'
-    Beginpoint: v/dpath/a_reg/q_reg_3_/Q       (v) triggered by  leading edge of
-    'ideal_clock'
-    Path Groups: {Reg2Reg}
-    Analysis View: analysis_default
-    Other End Arrival Time         -0.014
-    - Setup                         0.029
-    + Phase Shift                   0.600
-    + CPPR Adjustment               0.000
-    = Required Time                 0.557
-    - Arrival Time                  0.554
-    = Slack Time                    0.003
-         Clock Rise Edge                 0.000
-         + Clock Network Latency (Prop)  0.003
-         = Beginpoint Arrival Time       0.003
-         +-------------------------------------------------------------------------------------+
-         |           Instance           |     Arc      |   Cell   | Delay | Arrival | Required |
-         |                              |              |          |       |  Time   |   Time   |
-         |------------------------------+--------------+----------+-------+---------+----------|
-         | v/dpath/a_reg/q_reg_3_       | CK ^         |          |       |   0.003 |    0.006 |
-         | v/dpath/a_reg/q_reg_3_       | CK ^ -> Q v  | DFF_X1   | 0.097 |   0.099 |    0.102 |
-         | v/dpath/add/add_x_1/U323     | A2 v -> ZN ^ | NOR2_X1  | 0.047 |   0.147 |    0.150 |
-         | v/dpath/add/add_x_1/U351     | B1 ^ -> ZN v | OAI21_X1 | 0.021 |   0.168 |    0.171 |
-         | v/dpath/add/add_x_1/U352     | A v -> ZN ^  | AOI21_X1 | 0.058 |   0.226 |    0.229 |
-         | v/dpath/add/add_x_1/U367     | B1 ^ -> ZN v | OAI21_X1 | 0.035 |   0.261 |    0.264 |
-         | v/dpath/add/add_x_1/U391     | B1 v -> ZN ^ | AOI21_X1 | 0.115 |   0.376 |    0.379 |
-         | v/dpath/add/add_x_1/U472     | B1 ^ -> ZN v | OAI21_X1 | 0.034 |   0.410 |    0.413 |
-         | v/dpath/add/add_x_1/U477     | B1 v -> ZN ^ | AOI21_X1 | 0.040 |   0.450 |    0.453 |
-         | v/dpath/add/add_x_1/U310     | A ^ -> ZN ^  | XNOR2_X1 | 0.043 |   0.493 |    0.496 |
-         | v/dpath/add_mux/U9           | A1 ^ -> ZN v | NAND2_X1 | 0.016 |   0.509 |    0.512 |
-         | v/dpath/add_mux/U11          | A1 v -> ZN ^ | NAND2_X1 | 0.015 |   0.524 |    0.527 |
-         | v/dpath/result_mux/U18       | A1 ^ -> ZN ^ | AND2_X1  | 0.030 |   0.554 |    0.557 |
-         | v/dpath/result_reg/q_reg_25_ | D ^          | DFF_X1   | 0.000 |   0.554 |    0.557 |
-         +-------------------------------------------------------------------------------------+
-
-_To Do On Your Own:_ Since your design meets timing, enter the clock
-constraint as the cycle time on your handout. Highlight the critical path
-on the datapath diagram for the fixed-latency multiplier. Annotate each
-component along the critical path with a rough estimate of its delay in
-picoseconds. Don’t forget to estimate the register clock-to-q delay and
-the register setup time. What components are consuming the most time
-along the critical path?
-
-Let's now try pushing the variable latency multiplier through the flow
-with the same clock constraint.
-
-    % mkdir $TOPDIR/asic/build-lab1-var
-    % cd $TOPDIR/asic/build-lab1-var
-    % mflowgen run --design ../lab1-var
-    % make ece5745-block-gather
-    % make brg-rtl-4-state-vcssim
-    % make brg-synopsys-dc-synthesis
-    % make post-synth-gate-level-simulation
-    % make brg-cadence-innovus-signoff
-
-_To Do On Your Own:_ Enter the clock constraint as the cycle time on your
-handout. Highlight the critical path on the datapath diagram for the
-variable-latency multiplier. Annotate each component along the critical
-path with a rough estimate of its delay in picoseconds. Don’t forget to
-estimate the register clock-to-q delay and the register setup time. What
-components are consuming the most time along the critical path?
+Here, we can see that our design passes DRC and LVS checks, as well as that
+the antenna report is empty (indicating that we have no antenna errors)
 
 Evaluating Area
 --------------------------------------------------------------------------
 
-In addition to evaluating cycle time, we also want to evaluate area.
-While the synthesis reports include rough area estimates, the reports
-from place-and-route will be much more accurate
+Another important component of our designs is the area they take up
 
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % less 11-brg-cadence-innovus-signoff/reports/area.rpt
+    % less $RESULTS_DIR/reports/signoff/25-rcx_sta.area.rpt 
 
-The report is hierarchical showing you how much area is used by each
-component in the design. Do the same for the variable latency multiplier.
+Here, we can see that our design has a predictably small footprint - only
+7% of the total area we gave it in our `config.json` (with the main
+limitation being routing to our power grid - if pushed to a smaller
+size, we couldn't connect to the power rails)
 
-    Hinst Name                   Module Name                                  Inst Count  Total Area
-    ------------------------------------------------------------------------------------------------
-    IntMulFixed                                                                      619    1032.878
-     v                           IntMulFixed_lab1_imul_IntMulFixed_0                 619    1032.878
-      v/ctrl                     IntMulFixed_lab1_imul_IntMulFixedCtrl_0              63      90.440
-       v/ctrl/counter            IntMulFixed_vc_BasicCounter...                       49      69.692
-        v/ctrl/counter/count_reg IntMulFixed_vc_ResetReg_p_nbits6_p_reset_value0_0    18      35.112
-      v/dpath                    IntMulFixed_lab1_imul_IntMulFixedDpath_0            522     905.730
-       v/dpath/a_mux             IntMulFixed_vc_Mux2_p_nbits32_3                      32      58.786
-       v/dpath/a_reg             IntMulFixed_vc_Reg_p_nbits32_1                       32     144.704
-       v/dpath/add               IntMulFixed_vc_SimpleAdder_p_nbits32_0              270     244.188
-        v/dpath/add/add_x_1      IntMulFixed_vc_SimpleAdder_p_nbits32_DW01_add_0_0   270     244.188
-       v/dpath/add_mux           IntMulFixed_vc_Mux2_p_nbits32_2                      55      67.298
-       v/dpath/b_mux             IntMulFixed_vc_Mux2_p_nbits32_0                      32      58.786
-       v/dpath/b_reg             IntMulFixed_vc_Reg_p_nbits32_0                       32     144.704
-       v/dpath/lshifter          IntMulFixed_vc_LeftLogicalShifter...                  0       0.000
-       v/dpath/result_mux        IntMulFixed_vc_Mux2_p_nbits32_1                      34      35.378
-       v/dpath/result_reg        IntMulFixed_vc_EnReg_p_nbits32_0                     34     150.556
-       v/dpath/rshifter          IntMulFixed_vc_RightLogicalShifter...                 0       0.000
-
-_To Do On Your Own:_ Annotate each component in the datapath diagram for
-both the fixed-latency and variable-latency multipliers with a rough
-estimate of its area in square um. What components are consuming the most
-area? Compare the area between the fixed and variable latency
-multipliers. Where is the area overhead coming from?
-
-Evaluating Energy
+Evaluating Cycle Time
 --------------------------------------------------------------------------
 
-Finally, we want to evaluate the energy of our designs. To do this we
-combine activity factors from the post-synthesis gate-level simulation
-with information about each standard cell. Recall that we ran the
-evaluation simulator with two different input patterns: 100 zeros and 100
-random values. We can use the power analysis steps to calculate the total
-energy consumed for each pattern.
+For this design, we specified in our `config.json` that our target clock
+period is only 10ns - a very loose constraint, just so that we could
+demonstrate the flow.
 
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % make post-synth-power-analysis
+    % less $RESULTS_DIR/reports/signoff/25-rcx_sta.worst_slack.rpt
 
-We can see the total number of cycles and the energy for each pattern.
+Here, we can see that we have quite a large amount of slack (I had 6.32ns),
+indicating we might want to push our design faster in the future. We can
+also view the breakdown of the critical path
 
-    imul-fixed-small.vcd
-      exec_time = 1759 cycles
-      power     = 1.57 mW
-      energy    = 1.65698 nJ
+    % less $RESULTS_DIR/reports/signoff/25-rcx_sta.rpt
 
-We can also look at a hierarchical breakdown of where the power (energy)
-is consumed in the design:
+We made it easy on our tools by only having one sequential path, but the
+identification of the critical path is certainly useful with multiple
+sequential paths.
 
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % less 9-post-synth-power-analysis/reports/imul-fixed-small/power/IntMulFixed.power.hier.rpt
+Evaluating Power
+--------------------------------------------------------------------------
 
-We can see that much of the power is consumed in the registers.
+Lastly, we can get a **rough** estimate of power consumtion. "Rough" is the
+key here - we didn't tell our tools about the exact tasks we are running,
+so this estimate is based off of a very general activity factor to tell
+us the ball park of where we'd be operating.
 
-_To Do On Your Own:_ Enter the energy for both the fixed-latency and
-variable-latency multipliers on your handout.
+    % less $RESULTS_DIR/reports/signoff/25-rcx_sta.power.rpt
+
+Viewing our final GDS
+--------------------------------------------------------------------------
+
+We can lastly view our completed GDS using `klayout`! We'll also specify a
+layer file, so that `klayout` can tell which layers are supposed to be what
+
+    % klayout -l $TOPDIR/caravel.lyp $RESULTS_DIR/results/signoff/Counter.gds
+
+Note that the `results` folder includes many other useful results, such
+as a `.lef` file and a `.spice` file for our overall block, so it can
+later be used as a macro for larger designs.
 
 Summary
 --------------------------------------------------------------------------
 
-There is a final summary step which will report the outcome of all of the
-tests along with the cycle time, area, and power numbers.
+Working with the open-source flows can give you a sense of exactly what
+you didn't know you'd miss from the commercial versions. The reports may
+not be as precise, and the tools may take longer (lowering the clock period, 
+for example, causes the resizer to take much longer). However, the fact that
+we can generate these reports and results at all is a major achievement.
+Because of these, any user can now generate a GDS, allowing them not only
+to get concrete feedback about their designs, but crossing a major step
+towards realizing the design in silicon.
 
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % make brg-flow-summary
-
-    design_name = IntMulFixed
-
-    area & timing
-      design_area   = 1032.878 um^2
-      stdcells_area = 1032.878 um^2
-      macros_area   = 0.0 um^2
-      chip_area     = 13131.888 um^2
-      core_area     = 1571.528 um^2
-      constraint    = 0.6 ns
-      slack         = 0.003 ns
-      actual_clk    = 0.597 ns
-
-    imul-fixed-small.vcd
-      exec_time = 1759 cycles
-      power     = 1.57 mW
-      energy    = 1.65698 nJ
-
-You can also run all steps just by using `make` without any target, but
-you should only do this after you have carefully verified that the design
-meets timing and passes all tests. Here is how to do a clean build from
-scratch:
-
-    % rm -rf $TOPDIR/sim/build
-    % rm -rf $TOPDIR/asic/build-lab1-fixed
-
-    % mkdir -p $TOPDIR/sim/build
-    % cd $TOPDIR/sim/build
-    % pytest ../lab1_imul
-    % ../lab1_imul/imul-sim --impl fixed --input small --stats --translate --dump-vtb
-    % ../lab1_imul/imul-sim --impl var   --input small --stats --translate --dump-vtb
-
-    % mkdir -p $TOPDIR/asic/build-lab1-fixed
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % mflowgen run --design ../lab1-fixed
-    % make
-
-    % mkdir -p $TOPDIR/asic/build-lab1-var
-    % cd $TOPDIR/asic/build-lab1-var
-    % mflowgen run --design ../lab1-var
-    % make
-
-And don't forget you can always check out the final layout too!
-
-    % cd $TOPDIR/asic/build-lab1-fixed
-    % klayout -l $ECE5745_STDCELLS/klayout.lyp 11-brg-cadence-innovus-signoff/outputs/design.gds
-
-    % cd $TOPDIR/asic/build-lab1-var
-    % klayout -l $ECE5745_STDCELLS/klayout.lyp 11-brg-cadence-innovus-signoff/outputs/design.gds
-
+For further exploration if you're curious, we've been following along in the
+[Caravel User Project](https://github.com/efabless/caravel_user_project)
+framework from Efabless. If you wish to go further, you can use this framework
+to place your block inside the overall Caravel user space wrapper, as well as
+conduct RTL and gate-level simulations with it, includinc C code that can run
+on the RISCV core.
