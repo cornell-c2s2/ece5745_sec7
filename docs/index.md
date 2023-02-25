@@ -53,51 +53,40 @@ interfacing the design with the outside world
 The first step is to start access `ecelinux`. You can use VS Code for working 
 at the command line. We won’t need to use Linux applications with a GUI, so 
 there is no need to use X2go, MobaXterm, or Mac Terminal with XQuartz. Once 
-you are at the ecelinux prompt, source the C2S2 setup script, clone this repository 
+you are at the ecelinux prompt, source the setup script, clone this repository 
 from GitHub, and define an environment variable to keep track of the top 
 directory for the project.
 
-    % source setup-c2s2.sh
+    % source setup-ece5745.sh.sh
     % mkdir -p $HOME/ece5745
     % cd $HOME/ece5745
     % git clone https://github.com/cornell-c2s2/ece5745_sec7.git sec7
     % cd sec7
     % TOPDIR=$PWD
 
-Test, Evaluate, and Pickle the Design
+Test and Pickle the Design
 --------------------------------------------------------------------------
 
 The first step is always to verify that our design works before we start
 evaluating it. There is no sense in running the flow if the design is
-incorrect!
+incorrect! For this discussion, we will be using the fixed latency
+iterative multiplier from Lab 1. In addition, we will be dumping the
+test benches in Verilog, so that we may use them again in OpenLANE
 
     % mkdir -p $TOPDIR/sim/build
     % cd $TOPDIR/sim/build
-    % pytest ../lab1_imul
-
-The tests are for verification. We probably also want to do some
-preliminary design-space exploration of execution time in cycles using an
-evaluation simulator. You can run the evaluation simulator for our
-fixed-latency and variable-latency multipliers like this:
-
-    % cd $TOPDIR/sim/build
-    % ../lab1_imul/imul-sim --impl fixed --input small --stats --translate --dump-vtb
-    % ../lab1_imul/imul-sim --impl var   --input small --stats --translate --dump-vtb
+    % pytest ../lab1_imul/test/IntMulFixed_test.py --test-verilog --dump-vtb
 
 You should now have the Verilog that we want to push through the ASIC
-flow along with Verilog test benches that can be used for power analysis.
-The test bench uses a stream of 50 inputs where each input is small
-random number. Make a note of the execution time in cycles and the
-average latency per multiply transaction for each design on your handout.
+flow along with Verilog test benches that can be used for gate-level simulation.
 Take a quick look at the final Verilog RTL and test benches.
 
     % cd $TOPDIR/sim/build
     % less IntMulFixed__pickled.v
-    % less IntMulVar__pickled.v
     % less IntMulFixed_imul-fixed-small_tb.v.cases
     % less IntMulVar_imul-var-small_tb.v.cases
 
-Generating an ASIC Flow
+Switching over to OpenLANE
 --------------------------------------------------------------------------
 
 In agile ASIC design, we usually prefer building _chip generators_

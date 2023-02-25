@@ -9,4 +9,4 @@ the repo here:
 
 Or online here:
 
- - https://cornell-ece5745.github.io/ece5745-S03-asic-flow
+ - https://cornell-c2s2.github.io/ece5745_sec7/
