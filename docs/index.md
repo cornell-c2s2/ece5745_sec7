@@ -89,20 +89,17 @@ Take a quick look at the final Verilog RTL and test benches.
 Switching over to OpenLANE
 --------------------------------------------------------------------------
 
-In agile ASIC design, we usually prefer building _chip generators_
-instead of _chip instances_ to enable rapidly exploring a design space of
-possibilities. Similarly, we usually prefer using a _flow generator_
-instead of a _flow instance_ so we can rapidly generate many different
-flows for different designs, parameters, and even ADKs. We will use
-the mflowgen framework as our flow generator. You can read more about
-mflowgen here:
+Now that we have our pickled Verilog file, we can transfer it over to
+OpenLANE to begin working with it within their environment! All of our
+RTL code will live within the `caravel/verilog/rtl` folder
 
-  - <https://mflowgen.readthedocs.io/en/latest>
+    % cp $TOPDIR/sim/build/IntMulFixed__pickled.v $TOPDIR/openlane/verilog/rtl/IntMulFixed.v
+    % cd $TOPDIR/openlane/verilog/rtl
 
-We use a `flow.py` file to configure the flow. Every design you want to
-push through the flow should have its own unique subdirectory in the
-`asic` directory with its own `flow.py`. Let's take a look at the
-`flow.py` for the fixed-latency multiplier here:
+One change we have to make to our Verilog file is to explicitly tell the OpenLANE
+scripts what type of power we want routed to the cells in our design. Using your
+preferred code editor, open your `IntMulFixed.v` file, locate the top-level
+module definition ()
 
     % cd $TOPDIR/asic
     % less lab1-fixed/flow.py

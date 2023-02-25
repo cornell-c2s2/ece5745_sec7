@@ -21,3 +21,7 @@ __pycache__/
 
 asic-manual
 asic/old
+
+# For OpenLANE
+openlane/caravel
+openlane/mgmt_core_wrapper
