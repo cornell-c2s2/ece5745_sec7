@@ -65,7 +65,9 @@ working at the command line, but you will also need to a remote access option
 that supports Linux applications with a GUI such as X2Go, MobaXterm, or Mac 
 Terminal with XQuartz. Once you are at the c2s2-dev prompt, source the C2S2 
 setup script, clone this repository from GitHub, and define an environment 
-variable to keep track of the top directory for the project.
+variable to keep track of the top directory for the project. Note that if
+you have your `.bashrc` set up to automatically source a setup script, you
+will have to disable it for this tutorial.
 
     % source setup-c2s2.sh
     % mkdir -p $HOME/ece5745
@@ -116,7 +118,8 @@ Switching over to OpenLANE
 
 First, we should clone the Caravel User Project repository within our
 section repository, as well as install a few wrapper designs, such as
-Caravel and the Management Core Wrapper
+Caravel and the Management Core Wrapper (Note: the `make` command may
+take a few minutes)
 
     % cd $TOPDIR
     % git clone git@github.com:efabless/caravel_user_project.git openlane
@@ -280,7 +283,12 @@ checks:
     % less $RESULTS_DIR/reports/manufacturability.rpt
 
 Here, we can see that our design passes DRC and LVS checks, as well as that
-the antenna report is empty (indicating that we have no antenna errors)
+the antenna report is empty (indicating that we have no antenna errors).
+For those that are curious, or may not have heard of them, antenna
+violations arise when the tools detects that a particularly long wire may
+experience sufficient charge buildup during plasma etching that it may
+damage any gates it's connected to - more information can be found in
+the textbook, specifically Section 3.6.1 and Figure 3.36.
 
 Evaluating Area
 --------------------------------------------------------------------------
